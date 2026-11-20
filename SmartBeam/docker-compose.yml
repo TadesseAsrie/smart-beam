@@ -1,0 +1,11 @@
+# Build context is the repository root so the receiver/ folder is included.
+services:
+  smartbeam:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    ports: ["8080:8080"]
+    environment:
+      PUBLIC_URL: "https://your-domain.example.com"   # must be the public HTTPS URL the receivers will use
+      API_KEY: "change-me"                             # sent by the app as x-smartbeam-key
+      CONTENT_TTL_MINUTES: "120"
+    volumes: ["smartbeam-data:/data"]
+volumes: { smartbeam-data: {} }

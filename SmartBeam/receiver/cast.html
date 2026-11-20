@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SmartBeam Cast Receiver</title>
+  <link rel="stylesheet" href="stage.css" />
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+  <cast-media-player></cast-media-player>
+  <div id="stage">
+    <div id="idle"><h1>SmartBeam</h1><p>Waiting for the presenter…</p></div>
+    <canvas id="pdf"></canvas><img id="img" alt="" /><video id="vid" playsinline></video>
+    <div id="black"></div><div id="pointer"></div><div id="badge">Paused</div><div id="status"></div>
+  </div>
+  <script src="presenter.js"></script>
+  <script>
+    (function () {
+      var NS = 'urn:x-cast:com.smartbeam.presentation';
+      var ctx = cast.framework.CastReceiverContext.getInstance();
+      var pm = ctx.getPlayerManager();
+      var stage = document.getElementById('stage');
+      var idle = document.getElementById('idle');
+      var presenter = new SmartBeamPresenter(stage);
+      var total = 1;
+
+      function reply(senderId, obj) { try { ctx.sendCustomMessage(NS, senderId, JSON.stringify(obj)); } catch (e) {} }
+      function setMediaMode(on) { stage.style.display = on ? 'none' : 'flex'; }
+
+      // Standard Cast media (video / image from the phone's LAN server) is rendered by the CAF player.
+      pm.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, function (req) { presenter.clear(); idle.style.display = 'none'; setMediaMode(true); return req; });
+      pm.addEventListener(cast.framework.events.EventType.MEDIA_FINISHED, function () { setMediaMode(false); idle.style.display = 'flex'; });
+
+      function handle(m, sender) {
+        if (m.type === 'LOAD') {
+          setMediaMode(false); idle.style.display = 'none';
+          presenter.load({ kind: m.kind, url: m.url }, m.page).then(function (r) { total = r.total; reply(sender, { type: 'STATE', page: r.page, total: r.total }); })
+            .catch(function (e) { presenter.showStatus('Could not show this content'); reply(sender, { type: 'ERROR', message: String(e && e.message || e) }); });
+        } else if (m.type === 'EXIT') {
+          presenter.clear(); pm.stop(); setMediaMode(false); idle.style.display = 'flex';
+        } else if (m.type === 'COMMAND' && m.command) {
+          var c = m.command;
+          if (c.type === 'goto') presenter.goto(c.page).then(function () { reply(sender, { type: 'STATE', page: presenter.page, total: total }); });
+          else if (c.type === 'pause') presenter.setPaused(true);
+          else if (c.type === 'resume') presenter.setPaused(false);
+          else if (c.type === 'blackout') presenter.setBlackout(c.on);
+          else if (c.type === 'pointer') presenter.setPointer(c.x, c.y, c.visible);
+        }
+      }
+
+      ctx.addCustomMessageListener(NS, function (ev) {
+        var m = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+        handle(m, ev.senderId);
+      });
+
+      ctx.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function () {
+        if (ctx.getSenders().length === 0) {
+          presenter.showStatus('Presenter disconnected');
+          setTimeout(function () { if (ctx.getSenders().length === 0) ctx.stop(); }, 10000);
+        }
+      });
+
+      ctx.start({ disableIdleTimeout: true, customNamespaces: (function () { var o = {}; o[NS] = cast.framework.system.MessageType.JSON; return o; })() });
+    })();
+  </script>
+</body>
+</html>

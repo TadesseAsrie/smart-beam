@@ -1,0 +1,8 @@
+node_modules/
+/android/
+.expo/
+dist/
+backend/node_modules/
+backend/dist/
+backend/data/
+*.keystore

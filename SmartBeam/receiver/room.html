@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SmartBeam Receiver</title>
+  <link rel="stylesheet" href="stage.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <div id="stage">
+    <div id="idle"><h1>SmartBeam</h1><p>Open SmartBeam on your phone → Connect → Scan QR</p><div id="qr"></div><p id="code"></p></div>
+    <canvas id="pdf"></canvas><img id="img" alt="" /><video id="vid" playsinline></video>
+    <div id="black"></div><div id="pointer"></div><div id="badge">Paused</div><div id="status"></div>
+  </div>
+  <script src="presenter.js"></script>
+  <script>
+    (function () {
+      var origin = location.origin;
+      var presenter = new SmartBeamPresenter(document.getElementById('stage'));
+      var idle = document.getElementById('idle');
+      var room = null, version = 0, loadedUrl = null, lastNonce = -1;
+
+      function api(path, opts) { return fetch(origin + path, opts).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); }
+
+      function createRoom() {
+        var saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem('smartbeam-room')); } catch (e) {}
+        if (saved) return Promise.resolve(saved);
+        return api('/api/rooms', { method: 'POST' }).then(function (r) { sessionStorage.setItem('smartbeam-room', JSON.stringify(r)); return r; });
+      }
+
+      function showQr(r) {
+        var payload = 'smartbeam://room?server=' + encodeURIComponent(origin) + '&id=' + r.id + '&key=' + r.key;
+        var el = document.getElementById('qr'); el.innerHTML = '';
+        new QRCode(el, { text: payload, width: 280, height: 280 });
+        document.getElementById('code').textContent = 'Room ' + r.id.slice(0, 4).toUpperCase();
+      }
+
+      function apply(state) {
+        if (!state.content) { presenter.clear(); loadedUrl = null; idle.style.display = 'flex'; return Promise.resolve(); }
+        idle.style.display = 'none';
+        var p = Promise.resolve();
+        if (state.content.url !== loadedUrl) {
+          loadedUrl = state.content.url;
+          p = presenter.load({ kind: state.content.kind, url: state.content.url }, state.page).catch(function (e) { presenter.showStatus('Could not show this content: ' + e.message); });
+        } else if (state.content.kind === 'pdf') { p = presenter.goto(state.page); }
+        return p.then(function () {
+          presenter.setBlackout(!!state.blackout); presenter.setPaused(!!state.paused);
+          var pt = state.pointer || {}; presenter.setPointer(pt.x || 0, pt.y || 0, !!pt.visible);
+          if (state.video && state.video.nonce !== lastNonce) { lastNonce = state.video.nonce; presenter.videoControl(state.video.action, state.video.value); }
+        });
+      }
+
+      function loop() {
+        api('/api/rooms/' + room.id + '/state?since=' + version + '&rt=' + encodeURIComponent(room.receiverToken))
+          .then(function (r) { version = r.version; return r.changed ? apply(r.state) : null; })
+          .then(function () { setTimeout(loop, 100); })
+          .catch(function () { presenter.showStatus('Reconnecting…'); setTimeout(function () { presenter.showStatus(''); loop(); }, 3000); });
+      }
+
+      createRoom().then(function (r) { room = r; showQr(r); loop(); }).catch(function () { document.getElementById('code').textContent = 'Cannot reach the SmartBeam server.'; });
+    })();
+  </script>
+</body>
+</html>
